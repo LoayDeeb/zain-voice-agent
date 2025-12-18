@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="140dp"
+    android:height="40dp"
+    android:viewportWidth="140"
+    android:viewportHeight="40">
+    
+    <!-- Zain Logo Text Representation -->
+    <path
+        android:pathData="M10,30 L30,10 L30,15 L15,30 L30,30 L30,35 L10,35 L10,30Z"
+        android:fillColor="#000000"/>
+    
+    <!-- 'a' -->
+    <path
+        android:pathData="M40,20 C40,15 45,12 50,12 C55,12 60,15 60,20 L60,35 L55,35 L55,32 C53,34 50,35 47,35 C42,35 38,32 38,27 C38,22 42,20 47,20 L55,20 L55,20 C55,17 52,15 48,15 C44,15 41,17 40,20Z M55,25 L47,25 C44,25 42,26 42,28 C42,30 44,32 48,32 C52,32 55,29 55,25Z"
+        android:fillColor="#000000"/>
+    
+    <!-- 'i' with dot -->
+    <path
+        android:pathData="M65,12 L70,12 L70,35 L65,35 L65,12Z"
+        android:fillColor="#000000"/>
+    <path
+        android:pathData="M65,5 L70,5 L70,10 L65,10 L65,5Z"
+        android:fillColor="#54B8E9"/>
+    
+    <!-- 'n' -->
+    <path
+        android:pathData="M75,12 L80,12 L80,15 C82,13 86,12 90,12 C97,12 100,16 100,23 L100,35 L95,35 L95,24 C95,19 92,16 87,16 C82,16 80,19 80,24 L80,35 L75,35 L75,12Z"
+        android:fillColor="#000000"/>
+    
+    <!-- Dot accent -->
+    <path
+        android:pathData="M130,8 A5,5 0 1,1 130,18 A5,5 0 1,1 130,8"
+        android:fillColor="#54B8E9"/>
+</vector>

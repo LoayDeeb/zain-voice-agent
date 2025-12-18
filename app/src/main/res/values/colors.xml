@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Zain Brand Colors (from jo.zain.com guidelines) -->
+    <color name="zain_blue">#54B8E9</color>
+    <color name="zain_blue_dark">#3A9FD1</color>
+    <color name="zain_blue_light">#7ECDF2</color>
+    <color name="zain_gray">#BFBFBF</color>
+    
+    <!-- Legacy names mapped to new colors -->
+    <color name="zain_purple">#54B8E9</color>
+    <color name="zain_purple_dark">#3A9FD1</color>
+    <color name="zain_magenta">#54B8E9</color>
+    <color name="zain_pink">#7ECDF2</color>
+    
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+</resources>

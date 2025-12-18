@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">زين صوت</string>
+    <string name="zain_jordan">زين الأردن</string>
+    <string name="voice_assistant">المساعد الصوتي</string>
+    <string name="start_call">بدء المكالمة</string>
+    <string name="end_call">إنهاء المكالمة</string>
+    <string name="mute">كتم الصوت</string>
+    <string name="unmute">إلغاء الكتم</string>
+    <string name="speaker">مكبر الصوت</string>
+    <string name="connecting">جاري الاتصال...</string>
+    <string name="connected">متصل</string>
+    <string name="reconnecting">إعادة الاتصال...</string>
+    <string name="call_ended">انتهت المكالمة</string>
+    <string name="permission_required">الإذن مطلوب</string>
+    <string name="microphone_permission_message">مطلوب الوصول إلى الميكروفون لاستخدام المساعد الصوتي.</string>
+    <string name="grant_permission">منح الإذن</string>
+    <string name="cancel">إلغاء</string>
+    <string name="welcome_message">مرحباً بك في خدمة المساعد الصوتي</string>
+    <string name="welcome_message_en">Welcome to our Voice Assistant</string>
+</resources>

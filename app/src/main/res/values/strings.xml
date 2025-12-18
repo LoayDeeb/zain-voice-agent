@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Zain Voice</string>
+    <string name="zain_jordan">Zain Jordan</string>
+    <string name="voice_assistant">Voice Assistant</string>
+    <string name="start_call">Start Call</string>
+    <string name="end_call">End Call</string>
+    <string name="mute">Mute</string>
+    <string name="unmute">Unmute</string>
+    <string name="speaker">Speaker</string>
+    <string name="connecting">Connecting...</string>
+    <string name="connected">Connected</string>
+    <string name="reconnecting">Reconnecting...</string>
+    <string name="call_ended">Call Ended</string>
+    <string name="permission_required">Permission Required</string>
+    <string name="microphone_permission_message">Microphone access is required to use the voice assistant.</string>
+    <string name="grant_permission">Grant Permission</string>
+    <string name="cancel">Cancel</string>
+    <string name="welcome_message">مرحباً بك في خدمة المساعد الصوتي</string>
+    <string name="welcome_message_en">Welcome to our Voice Assistant</string>
+</resources>
