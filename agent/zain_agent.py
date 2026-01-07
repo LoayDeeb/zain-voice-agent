@@ -176,7 +176,9 @@ class ZainAssistant(Agent):
                     return "عذراً، حدث خطأ في الخدمة. يرجى المحاولة مرة أخرى."
         
         except Exception as e:
-            print(f"Error calling agent API: {e}")
+            import traceback
+            logging.error(f"Error calling agent API: {e}")
+            logging.error(f"Full traceback: {traceback.format_exc()}")
             return "عذراً، حدث خطأ في الاتصال. يرجى المحاولة لاحقاً."
 
 
