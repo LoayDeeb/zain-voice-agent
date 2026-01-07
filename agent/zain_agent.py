@@ -36,7 +36,7 @@ async def get_http_session() -> aiohttp.ClientSession:
             keepalive_timeout=60,
             enable_cleanup_closed=True,
         )
-        timeout = aiohttp.ClientTimeout(total=5, connect=3)  # Fast fail for voice
+        timeout = aiohttp.ClientTimeout(total=30, connect=10)  # Allow more time for API response
         _http_session = aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
