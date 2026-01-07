@@ -23,3 +23,9 @@
 -dontwarn okio.**
 -keep class okhttp3.** { *; }
 -keep interface okhttp3.** { *; }
+
+# Missing classes from R8
+-dontwarn com.google.errorprone.annotations.**
+-dontwarn com.google.errorprone.annotations.MustBeClosed
+-dontwarn javax.annotation.**
+-dontwarn org.codehaus.mojo.animal_sniffer.**
