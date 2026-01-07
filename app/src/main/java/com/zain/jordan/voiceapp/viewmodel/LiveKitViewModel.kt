@@ -152,17 +152,18 @@ class LiveKitViewModel(application: Application) : AndroidViewModel(application)
                 Log.d(TAG, "Set preferred device list with Speakerphone first")
             }
             
-            // Set audio mode and volume for voice call
+            // Set audio mode for voice call (respect user's volume settings)
             val audioManager = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as AudioManager
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             audioManager.isSpeakerphoneOn = true
             
-            // Boost both VOICE_CALL and MUSIC streams (WebRTC may use either)
-            val maxVoice = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
-            val maxMusic = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVoice, 0)
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxMusic, 0)
-            Log.d(TAG, "Audio mode MODE_IN_COMMUNICATION, speaker ON, volumes: voice=$maxVoice music=$maxMusic")
+            // Only ensure volume is not zero, don't force max (avoids distortion/echo)
+            val currentVoice = audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+            if (currentVoice == 0) {
+                val maxVoice = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+                audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxOf(1, maxVoice / 2), 0)
+            }
+            Log.d(TAG, "Audio mode MODE_IN_COMMUNICATION, speaker ON")
             
             // Listen to room events
             eventsJob = viewModelScope.launch {
@@ -245,9 +246,7 @@ class LiveKitViewModel(application: Application) : AndroidViewModel(application)
                     // Enable audio playback for remote track with boosted volume
                     (event.track as? io.livekit.android.room.track.RemoteAudioTrack)?.let { audioTrack ->
                         Log.d(TAG, "Starting remote audio track")
-                        // Boost track volume (1.0 = 100%; 2.0 = 200% for louder output)
-                        audioTrack.setVolume(2.0)
-                        Log.d(TAG, "Set remote audio track volume to 2.0")
+                        audioTrack.setVolume(1.0)
                         audioTrack.start()
                     }
                 }

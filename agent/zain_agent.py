@@ -11,14 +11,14 @@ from livekit.plugins import elevenlabs, silero
 
 load_dotenv()
 
-# Enable debug logging for STT and TTS
+# Production logging - use INFO for app, WARNING for libraries
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
-logging.getLogger("livekit.plugins.elevenlabs").setLevel(logging.DEBUG)
-logging.getLogger("livekit.plugins.silero").setLevel(logging.DEBUG)
+logging.getLogger("livekit.agents").setLevel(logging.INFO)
+logging.getLogger("livekit.plugins.elevenlabs").setLevel(logging.WARNING)
+logging.getLogger("livekit.plugins.silero").setLevel(logging.WARNING)
 
 AGENT_API_URL = os.getenv("AGENT_API_URL", "https://agenticbuilder.onrender.com/api/agent/invoke")
 AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
@@ -36,7 +36,7 @@ async def get_http_session() -> aiohttp.ClientSession:
             keepalive_timeout=60,
             enable_cleanup_closed=True,
         )
-        timeout = aiohttp.ClientTimeout(total=30, connect=5)
+        timeout = aiohttp.ClientTimeout(total=5, connect=3)  # Fast fail for voice
         _http_session = aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
@@ -210,13 +210,13 @@ async def entrypoint(ctx: agents.JobContext):
             voice_id="9enyNIN2oxpPh6N3QDbc",  # Custom Arabic voice
             model="eleven_turbo_v2_5",
             language="ar",
-            streaming_latency=0,  # Minimize buffering for faster first audio
+            streaming_latency=1,  # Small buffer for smoother audio on variable networks
         ),
         
-        # Voice Activity Detection - tuned for low latency
+        # Voice Activity Detection - balanced for quality and responsiveness
         vad=silero.VAD.load(
-            min_speech_duration=0.05,
-            min_silence_duration=0.15,
+            min_speech_duration=0.25,  # 250ms of speech before considering it a turn
+            min_silence_duration=0.4,   # 400ms of silence before ending the turn
         ),
     )
     
