@@ -202,8 +202,10 @@ async def entrypoint(ctx: agents.JobContext):
     
     # Create the agent session with ElevenLabs for both STT and TTS
     session = AgentSession(
-        # Speech-to-Text: ElevenLabs Scribe - FORCE ARABIC to prevent Turkish/other language detection
-        stt=elevenlabs.STT(),
+        # Speech-to-Text: ElevenLabs Scribe - explicitly set Arabic language
+        stt=elevenlabs.STT(
+            language="ar",  # Force Arabic recognition
+        ),
         
         # Text-to-Speech: ElevenLabs with low-latency streaming settings
         tts=elevenlabs.TTS(
