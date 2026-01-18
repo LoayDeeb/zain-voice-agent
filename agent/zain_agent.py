@@ -22,7 +22,7 @@ logging.getLogger("livekit.plugins.silero").setLevel(logging.WARNING)
 
 AGENT_API_URL = os.getenv("AGENT_API_URL", "https://agenticbuilder.onrender.com/api/agent/invoke/stream")
 AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
-AGENT_ID = os.getenv("AGENT_ID", "14e9ebf0-ae34-4b21-8760-b0e3fe87275d")
+AGENT_ID = os.getenv("AGENT_ID", "9285dd53-6d2e-4c43-aaf3-a6ac2ce21e50")
 
 # Global aiohttp session for connection reuse (major latency improvement)
 _http_session: aiohttp.ClientSession | None = None
