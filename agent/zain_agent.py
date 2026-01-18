@@ -20,7 +20,7 @@ logging.getLogger("livekit.agents").setLevel(logging.INFO)
 logging.getLogger("livekit.plugins.elevenlabs").setLevel(logging.WARNING)
 logging.getLogger("livekit.plugins.silero").setLevel(logging.WARNING)
 
-AGENT_API_URL = os.getenv("AGENT_API_URL", "https://agenticbuilder.onrender.com/api/agent/invoke")
+AGENT_API_URL = os.getenv("AGENT_API_URL", "https://agenticbuilder.onrender.com/api/agent/invoke/stream")
 AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
 AGENT_ID = os.getenv("AGENT_ID", "14e9ebf0-ae34-4b21-8760-b0e3fe87275d")
 
@@ -50,7 +50,7 @@ async def keep_render_warm():
         try:
             session = await get_http_session()
             # Ping the agent API health endpoint (or just the base URL)
-            async with session.get(AGENT_API_URL.replace("/api/agent/invoke", "/health"), timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.get(AGENT_API_URL.replace("/api/agent/invoke/stream", "/health"), timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 logging.debug(f"Keep-alive ping: {resp.status}")
         except Exception as e:
             logging.debug(f"Keep-alive ping failed (non-critical): {e}")
@@ -79,7 +79,6 @@ class ZainAssistant(Agent):
         """Called when the user finishes speaking."""
         turn_start = time.time()
         
-        # Calculate STT time (from when user started speaking to now)
         if self.stt_start_time:
             stt_duration = (turn_start - self.stt_start_time) * 1000
             logging.info(f"⏱️ STT completed in {stt_duration:.0f}ms")
@@ -91,27 +90,16 @@ class ZainAssistant(Agent):
             logging.warning("No user text received")
             return
         
-        # Build conversation history from the last 4 messages (reduced for lower latency)
         conversation_history = self._build_conversation_history(turn_ctx, max_messages=4)
         
-        # Call your agent API with conversation history
-        api_start = time.time()
-        logging.info("Calling agent API...")
-        response_text = await self._call_agent_api(user_text, conversation_history)
-        api_duration = (time.time() - api_start) * 1000
-        logging.info(f"⏱️ API call completed in {api_duration:.0f}ms")
-        logging.info(f"API response: {response_text[:100]}...")
+        logging.info("Starting streaming API call with streaming TTS...")
+        text_stream = self._stream_agent_api(user_text, conversation_history)
         
-        # Speak the response
         tts_start = time.time()
-        logging.info("Speaking response via TTS...")
-        await self.session.say(response_text, allow_interruptions=True)
-        tts_duration = (time.time() - tts_start) * 1000
-        logging.info(f"⏱️ TTS completed in {tts_duration:.0f}ms")
+        await self.session.say(text_stream, allow_interruptions=True)
         
-        # Total turn time
         total_duration = (time.time() - turn_start) * 1000
-        logging.info(f"⏱️ TOTAL turn time: {total_duration:.0f}ms (API: {api_duration:.0f}ms, TTS: {tts_duration:.0f}ms)")
+        logging.info(f"⏱️ TOTAL turn time: {total_duration:.0f}ms")
     
     def _build_conversation_history(self, turn_ctx: agents.ChatContext, max_messages: int = 10) -> str:
         """Build a formatted string of the last N messages from conversation history."""
@@ -134,28 +122,29 @@ class ZainAssistant(Agent):
         
         return "\n".join(messages) if messages else ""
     
-    async def _call_agent_api(self, message: str, conversation_history: str = "") -> str:
-        """Call the AgenticBuilder API to get a response."""
+    async def _stream_agent_api(self, message: str, conversation_history: str = ""):
+        """Stream text chunks from the AgenticBuilder API for streaming TTS."""
+        import json as json_module
         try:
             session = await get_http_session()
             headers = {
                 "Content-Type": "application/json",
-                "X-API-Key": AGENT_API_KEY
+                "X-API-Key": AGENT_API_KEY,
+                "Accept": "text/event-stream"
             }
             
-            # Include conversation history in the message if available
             if conversation_history:
                 full_message = f"Conversation History:\n{conversation_history}\n\nCurrent message: {message}"
             else:
                 full_message = message
             
-            logging.info(f"Sending message with history: {full_message[:200]}...")
+            logging.info(f"Streaming request: {full_message[:200]}...")
             
             payload = {
                 "agent_id": AGENT_ID,
                 "message": full_message,
                 "channel": "api",
-                "persist_messages": False,  # Faster for voice - no server-side history overhead
+                "persist_messages": False,
                 "max_iterations": 10,
                 "max_tool_iterations": 10
             }
@@ -163,23 +152,48 @@ class ZainAssistant(Agent):
             if self.session_id:
                 payload["session_id"] = self.session_id
             
+            first_chunk = True
+            current_event = None
             async with session.post(AGENT_API_URL, json=payload, headers=headers) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    # Store session ID for conversation continuity
-                    if "session_id" in data:
-                        self.session_id = data["session_id"]
-                    return data.get("response") or data.get("message") or "عذراً، لم أتمكن من فهم طلبك."
+                    async for line in resp.content:
+                        line = line.decode('utf-8').strip()
+                        if not line:
+                            continue
+                        
+                        if line.startswith("event: "):
+                            current_event = line[7:]
+                            continue
+                        
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            try:
+                                data = json_module.loads(data_str)
+                                
+                                if current_event == "init":
+                                    if "conversation_id" in data:
+                                        self.session_id = data["conversation_id"]
+                                elif current_event == "text_delta":
+                                    if "text" in data:
+                                        if first_chunk:
+                                            logging.info("⏱️ First chunk received - starting TTS")
+                                            first_chunk = False
+                                        yield data["text"]
+                                elif current_event == "done":
+                                    logging.info("Stream complete")
+                                    return
+                            except json_module.JSONDecodeError:
+                                continue
                 else:
                     error_text = await resp.text()
-                    print(f"API Error {resp.status}: {error_text}")
-                    return "عذراً، حدث خطأ في الخدمة. يرجى المحاولة مرة أخرى."
+                    logging.error(f"API Error {resp.status}: {error_text}")
+                    yield "عذراً، حدث خطأ في الخدمة."
         
         except Exception as e:
             import traceback
-            logging.error(f"Error calling agent API: {e}")
+            logging.error(f"Error streaming agent API: {e}")
             logging.error(f"Full traceback: {traceback.format_exc()}")
-            return "عذراً، حدث خطأ في الاتصال. يرجى المحاولة لاحقاً."
+            yield "عذراً، حدث خطأ في الاتصال."
 
 
 async def entrypoint(ctx: agents.JobContext):
