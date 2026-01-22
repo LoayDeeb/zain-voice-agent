@@ -6,7 +6,7 @@ import time
 from dotenv import load_dotenv
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions
+from livekit.agents import AgentSession, Agent, room_io
 from livekit.plugins import elevenlabs, silero
 
 load_dotenv()
@@ -36,7 +36,7 @@ async def get_http_session() -> aiohttp.ClientSession:
             keepalive_timeout=60,
             enable_cleanup_closed=True,
         )
-        timeout = aiohttp.ClientTimeout(total=60, connect=10)  # Allow more time for API response
+        timeout = aiohttp.ClientTimeout(total=60, connect=10)
         _http_session = aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
@@ -49,12 +49,11 @@ async def keep_render_warm():
     while True:
         try:
             session = await get_http_session()
-            # Ping the agent API health endpoint (or just the base URL)
             async with session.get(AGENT_API_URL.replace("/api/agent/invoke/stream", "/health"), timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 logging.debug(f"Keep-alive ping: {resp.status}")
         except Exception as e:
             logging.debug(f"Keep-alive ping failed (non-critical): {e}")
-        await asyncio.sleep(300)  # 5 minutes
+        await asyncio.sleep(300)
 
 
 class ZainAssistant(Agent):
@@ -67,112 +66,112 @@ class ZainAssistant(Agent):
         self.api_session_id = None
     
     async def on_enter(self):
-        # Greet the user when they join
         await self.session.say(
             "مرحباً بك في زين الأردن. كيف يمكنني مساعدتك اليوم؟",
             allow_interruptions=True
         )
     
-    async def llm_node(self, chat_ctx: agents.ChatContext, tools: list, model_settings: agents.ModelSettings):
-        """Custom LLM node that uses the AgenticBuilder API instead of a built-in LLM."""
+    async def on_user_turn_completed(self, turn_ctx: agents.ChatContext, new_message: agents.ChatMessage):
+        """Called when the user finishes speaking - we handle the response manually."""
         import json as json_module
         
         turn_start = time.time()
+        user_text = new_message.text_content
         
-        # Get the last user message
-        user_message = None
-        for msg in reversed(list(chat_ctx.items)):
-            if hasattr(msg, 'role') and msg.role == 'user':
-                user_message = msg.text_content if hasattr(msg, 'text_content') else str(msg)
-                break
+        logging.info(f"User said: {user_text}")
         
-        if not user_message:
-            logging.warning("No user message found in chat context")
+        if not user_text:
+            logging.warning("No user text received")
             return
         
-        logging.info(f"User said: {user_message}")
-        
-        # Build conversation history from chat context
-        conversation_history = self._build_conversation_history(chat_ctx)
+        conversation_history = self._build_conversation_history(turn_ctx)
         
         logging.info("Starting streaming API call...")
         
-        try:
-            session = await get_http_session()
-            headers = {
-                "Content-Type": "application/json",
-                "X-API-Key": AGENT_API_KEY,
-                "Accept": "text/event-stream"
-            }
-            
-            if conversation_history:
-                full_message = f"Conversation History:\n{conversation_history}\n\nCurrent message: {user_message}"
-            else:
-                full_message = user_message
-            
-            logging.info(f"Streaming request: {full_message[:200]}...")
-            
-            payload = {
-                "agent_id": AGENT_ID,
-                "message": full_message,
-                "channel": "api",
-                "persist_messages": False,
-                "max_iterations": 10,
-                "max_tool_iterations": 10
-            }
-            
-            if self.api_session_id:
-                payload["session_id"] = self.api_session_id
-            
-            first_chunk = True
-            current_event = None
-            async with session.post(AGENT_API_URL, json=payload, headers=headers) as resp:
-                if resp.status == 200:
-                    async for line in resp.content:
-                        line = line.decode('utf-8').strip()
-                        if not line:
-                            continue
-                        
-                        if line.startswith("event: "):
-                            current_event = line[7:]
-                            continue
-                        
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            try:
-                                data = json_module.loads(data_str)
-                                
-                                if current_event == "init":
-                                    if "conversation_id" in data:
-                                        self.api_session_id = data["conversation_id"]
-                                elif current_event == "text_delta":
-                                    if "text" in data:
-                                        if first_chunk:
-                                            logging.info("⏱️ First chunk received - starting TTS")
-                                            first_chunk = False
-                                        yield data["text"]
-                                elif current_event == "done":
-                                    logging.info("Stream complete")
-                                    total_duration = (time.time() - turn_start) * 1000
-                                    logging.info(f"⏱️ TOTAL turn time: {total_duration:.0f}ms")
-                                    return
-                            except json_module.JSONDecodeError:
-                                continue
+        async def stream_response():
+            """Async generator that streams text from the API."""
+            try:
+                session = await get_http_session()
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-API-Key": AGENT_API_KEY,
+                    "Accept": "text/event-stream"
+                }
+                
+                if conversation_history:
+                    full_message = f"Conversation History:\n{conversation_history}\n\nCurrent message: {user_text}"
                 else:
-                    error_text = await resp.text()
-                    logging.error(f"API Error {resp.status}: {error_text}")
-                    yield "عذراً، حدث خطأ في الخدمة."
+                    full_message = user_text
+                
+                logging.info(f"Streaming request: {full_message[:200]}...")
+                
+                payload = {
+                    "agent_id": AGENT_ID,
+                    "message": full_message,
+                    "channel": "api",
+                    "persist_messages": False,
+                    "max_iterations": 10,
+                    "max_tool_iterations": 10
+                }
+                
+                if self.api_session_id:
+                    payload["session_id"] = self.api_session_id
+                
+                first_chunk = True
+                current_event = None
+                async with session.post(AGENT_API_URL, json=payload, headers=headers) as resp:
+                    if resp.status == 200:
+                        async for line in resp.content:
+                            line = line.decode('utf-8').strip()
+                            if not line:
+                                continue
+                            
+                            if line.startswith("event: "):
+                                current_event = line[7:]
+                                continue
+                            
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                try:
+                                    data = json_module.loads(data_str)
+                                    
+                                    if current_event == "init":
+                                        if "conversation_id" in data:
+                                            self.api_session_id = data["conversation_id"]
+                                    elif current_event == "text_delta":
+                                        if "text" in data:
+                                            if first_chunk:
+                                                logging.info("⏱️ First chunk received - starting TTS")
+                                                first_chunk = False
+                                            yield data["text"]
+                                    elif current_event == "done":
+                                        logging.info("Stream complete")
+                                        return
+                                except json_module.JSONDecodeError:
+                                    continue
+                    else:
+                        error_text = await resp.text()
+                        logging.error(f"API Error {resp.status}: {error_text}")
+                        yield "عذراً، حدث خطأ في الخدمة."
+            
+            except Exception as e:
+                import traceback
+                logging.error(f"Error streaming agent API: {e}")
+                logging.error(f"Full traceback: {traceback.format_exc()}")
+                yield "عذراً، حدث خطأ في الاتصال."
         
+        try:
+            await self.session.say(stream_response(), allow_interruptions=True)
         except Exception as e:
-            import traceback
-            logging.error(f"Error streaming agent API: {e}")
-            logging.error(f"Full traceback: {traceback.format_exc()}")
-            yield "عذراً، حدث خطأ في الاتصال."
+            logging.warning(f"TTS interrupted or failed: {e}")
+        
+        total_duration = (time.time() - turn_start) * 1000
+        logging.info(f"⏱️ TOTAL turn time: {total_duration:.0f}ms")
     
-    def _build_conversation_history(self, chat_ctx: agents.ChatContext, max_messages: int = 4) -> str:
+    def _build_conversation_history(self, turn_ctx: agents.ChatContext, max_messages: int = 4) -> str:
         """Build a formatted string of the last N messages from conversation history."""
         messages = []
-        chat_messages = list(chat_ctx.items)[-max_messages:] if chat_ctx.items else []
+        chat_messages = list(turn_ctx.items)[-max_messages:] if turn_ctx.items else []
         
         for msg in chat_messages:
             role = msg.role if hasattr(msg, 'role') else 'unknown'
@@ -190,13 +189,10 @@ class ZainAssistant(Agent):
 async def entrypoint(ctx: agents.JobContext):
     """Main entrypoint for the agent."""
     
-    # Start keep-alive task to prevent Render cold starts
     asyncio.create_task(keep_render_warm())
     
-    # Connect to the room
     await ctx.connect()
     
-    # Log participants for debugging
     logging.info("Connected to room: %s", ctx.room.name)
     for p in ctx.room.remote_participants.values():
         logging.info(
@@ -205,43 +201,36 @@ async def entrypoint(ctx: agents.JobContext):
             len([t for t in p.track_publications.values() if t.kind.name == "KIND_AUDIO"])
         )
     
-    # Create the agent session with ElevenLabs for both STT and TTS
     session = AgentSession(
-        # Speech-to-Text: ElevenLabs Scribe - explicitly set Arabic language
         stt=elevenlabs.STT(
-            language_code="ar",  # Force Arabic recognition
+            language_code="ar",
         ),
-        
-        # Text-to-Speech: ElevenLabs with low-latency streaming settings
         tts=elevenlabs.TTS(
-            voice_id="9enyNIN2oxpPh6N3QDbc",  # Custom Arabic voice
+            voice_id="9enyNIN2oxpPh6N3QDbc",
             model="eleven_turbo_v2_5",
             language="ar",
-            inactivity_timeout=180,  # 3 minutes timeout to handle slow API responses
+            inactivity_timeout=180,
         ),
-        
-        # Voice Activity Detection - balanced for quality and responsiveness
         vad=silero.VAD.load(
-            min_speech_duration=0.25,  # 250ms of speech before considering it a turn
-            min_silence_duration=0.4,   # 400ms of silence before ending the turn
+            min_speech_duration=0.25,
+            min_silence_duration=0.4,
         ),
+        # No LLM - we handle responses in on_user_turn_completed
+        llm=None,
     )
     
-    # Create the agent instance
     agent = ZainAssistant()
     
-    # Start the agent with room input options to prevent premature disconnection
     await session.start(
         room=ctx.room,
         agent=agent,
-        room_input_options=RoomInputOptions(
-            close_on_disconnect=False,  # Don't close session on brief disconnects
+        room_options=room_io.RoomOptions(
+            close_on_disconnect=False,
         ),
     )
 
 
 if __name__ == "__main__":
-    # Run the agent worker
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
