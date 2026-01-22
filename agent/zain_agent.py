@@ -6,7 +6,7 @@ import time
 from dotenv import load_dotenv
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent
+from livekit.agents import AgentSession, Agent, RoomInputOptions
 from livekit.plugins import elevenlabs, silero
 
 load_dotenv()
@@ -36,7 +36,7 @@ async def get_http_session() -> aiohttp.ClientSession:
             keepalive_timeout=60,
             enable_cleanup_closed=True,
         )
-        timeout = aiohttp.ClientTimeout(total=30, connect=10)  # Allow more time for API response
+        timeout = aiohttp.ClientTimeout(total=60, connect=10)  # Allow more time for API response
         _http_session = aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
@@ -96,7 +96,11 @@ class ZainAssistant(Agent):
         text_stream = self._stream_agent_api(user_text, conversation_history)
         
         tts_start = time.time()
-        await self.session.say(text_stream, allow_interruptions=True)
+        try:
+            await self.session.say(text_stream, allow_interruptions=True)
+        except Exception as e:
+            logging.warning(f"TTS interrupted or failed: {e}")
+            # Don't re-raise - session may have been interrupted by user
         
         total_duration = (time.time() - turn_start) * 1000
         logging.info(f"⏱️ TOTAL turn time: {total_duration:.0f}ms")
@@ -226,7 +230,7 @@ async def entrypoint(ctx: agents.JobContext):
             voice_id="9enyNIN2oxpPh6N3QDbc",  # Custom Arabic voice
             model="eleven_turbo_v2_5",
             language="ar",
-            streaming_latency=1,  # Small buffer for smoother audio on variable networks
+            inactivity_timeout=180,  # 3 minutes timeout to handle slow API responses
         ),
         
         # Voice Activity Detection - balanced for quality and responsiveness
@@ -245,10 +249,13 @@ async def entrypoint(ctx: agents.JobContext):
         agent.stt_start_time = time.time()
         logging.info("🎤 User started speaking - STT timer started")
     
-    # Start the agent
+    # Start the agent with room input options to prevent premature disconnection
     await session.start(
         room=ctx.room,
         agent=agent,
+        room_input_options=RoomInputOptions(
+            close_on_disconnect=False,  # Don't close session on brief disconnects
+        ),
     )
 
 
