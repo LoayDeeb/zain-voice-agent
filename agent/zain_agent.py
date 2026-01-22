@@ -90,6 +90,7 @@ class ZainAssistant(Agent):
         
         async def stream_response():
             """Async generator that streams text from the API."""
+            logging.info("🎤 stream_response generator started")
             try:
                 session = await get_http_session()
                 headers = {
@@ -145,7 +146,7 @@ class ZainAssistant(Agent):
                                                 first_chunk = False
                                             yield data["text"]
                                     elif current_event == "done":
-                                        logging.info("Stream complete")
+                                        logging.info("🎤 Stream complete - generator finishing")
                                         return
                                 except json_module.JSONDecodeError:
                                     continue
@@ -161,7 +162,11 @@ class ZainAssistant(Agent):
                 yield "عذراً، حدث خطأ في الاتصال."
         
         try:
-            await self.session.say(stream_response(), allow_interruptions=True)
+            # Create the generator instance and pass to say()
+            # session.say() returns a SpeechHandle - we need to await it to wait for completion
+            speech_handle = await self.session.say(stream_response(), allow_interruptions=True)
+            # Wait for TTS to finish speaking
+            await speech_handle
         except Exception as e:
             logging.warning(f"TTS interrupted or failed: {e}")
         
@@ -210,6 +215,8 @@ async def entrypoint(ctx: agents.JobContext):
             model="eleven_turbo_v2_5",
             language="ar",
             inactivity_timeout=180,
+            # Streaming optimizations
+            chunk_length_schedule=[50, 80, 120, 160],  # Smaller chunks = lower latency
         ),
         vad=silero.VAD.load(
             min_speech_duration=0.25,
