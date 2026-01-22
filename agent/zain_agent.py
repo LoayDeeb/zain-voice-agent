@@ -64,9 +64,7 @@ class ZainAssistant(Agent):
             You help customers with their telecom needs in Arabic and English.
             Be helpful, concise, and professional."""
         )
-        self.session_id = None
-        self.stt_start_time = None
-        self.turn_start_time = None
+        self.api_session_id = None
     
     async def on_enter(self):
         # Greet the user when they join
@@ -75,60 +73,30 @@ class ZainAssistant(Agent):
             allow_interruptions=True
         )
     
-    async def on_user_turn_completed(self, turn_ctx: agents.ChatContext, new_message: agents.ChatMessage):
-        """Called when the user finishes speaking."""
+    async def llm_node(self, chat_ctx: agents.ChatContext, tools: list, model_settings: agents.ModelSettings):
+        """Custom LLM node that uses the AgenticBuilder API instead of a built-in LLM."""
+        import json as json_module
+        
         turn_start = time.time()
         
-        if self.stt_start_time:
-            stt_duration = (turn_start - self.stt_start_time) * 1000
-            logging.info(f"⏱️ STT completed in {stt_duration:.0f}ms")
+        # Get the last user message
+        user_message = None
+        for msg in reversed(list(chat_ctx.items)):
+            if hasattr(msg, 'role') and msg.role == 'user':
+                user_message = msg.text_content if hasattr(msg, 'text_content') else str(msg)
+                break
         
-        user_text = new_message.text_content
-        logging.info(f"User said: {user_text}")
-        
-        if not user_text:
-            logging.warning("No user text received")
+        if not user_message:
+            logging.warning("No user message found in chat context")
             return
         
-        conversation_history = self._build_conversation_history(turn_ctx, max_messages=4)
+        logging.info(f"User said: {user_message}")
         
-        logging.info("Starting streaming API call with streaming TTS...")
-        text_stream = self._stream_agent_api(user_text, conversation_history)
+        # Build conversation history from chat context
+        conversation_history = self._build_conversation_history(chat_ctx)
         
-        tts_start = time.time()
-        try:
-            await self.session.say(text_stream, allow_interruptions=True)
-        except Exception as e:
-            logging.warning(f"TTS interrupted or failed: {e}")
-            # Don't re-raise - session may have been interrupted by user
+        logging.info("Starting streaming API call...")
         
-        total_duration = (time.time() - turn_start) * 1000
-        logging.info(f"⏱️ TOTAL turn time: {total_duration:.0f}ms")
-    
-    def _build_conversation_history(self, turn_ctx: agents.ChatContext, max_messages: int = 10) -> str:
-        """Build a formatted string of the last N messages from conversation history."""
-        messages = []
-        
-        # Get messages from chat context (excluding the current message which is handled separately)
-        chat_messages = list(turn_ctx.items)[-max_messages:] if turn_ctx.items else []
-        
-        for msg in chat_messages:
-            role = msg.role if hasattr(msg, 'role') else 'unknown'
-            content = msg.text_content if hasattr(msg, 'text_content') else str(msg)
-            
-            if content:
-                if role == 'user':
-                    messages.append(f"User: {content}")
-                elif role == 'assistant':
-                    messages.append(f"Assistant: {content}")
-                else:
-                    messages.append(f"{role}: {content}")
-        
-        return "\n".join(messages) if messages else ""
-    
-    async def _stream_agent_api(self, message: str, conversation_history: str = ""):
-        """Stream text chunks from the AgenticBuilder API for streaming TTS."""
-        import json as json_module
         try:
             session = await get_http_session()
             headers = {
@@ -138,9 +106,9 @@ class ZainAssistant(Agent):
             }
             
             if conversation_history:
-                full_message = f"Conversation History:\n{conversation_history}\n\nCurrent message: {message}"
+                full_message = f"Conversation History:\n{conversation_history}\n\nCurrent message: {user_message}"
             else:
-                full_message = message
+                full_message = user_message
             
             logging.info(f"Streaming request: {full_message[:200]}...")
             
@@ -153,8 +121,8 @@ class ZainAssistant(Agent):
                 "max_tool_iterations": 10
             }
             
-            if self.session_id:
-                payload["session_id"] = self.session_id
+            if self.api_session_id:
+                payload["session_id"] = self.api_session_id
             
             first_chunk = True
             current_event = None
@@ -176,7 +144,7 @@ class ZainAssistant(Agent):
                                 
                                 if current_event == "init":
                                     if "conversation_id" in data:
-                                        self.session_id = data["conversation_id"]
+                                        self.api_session_id = data["conversation_id"]
                                 elif current_event == "text_delta":
                                     if "text" in data:
                                         if first_chunk:
@@ -185,6 +153,8 @@ class ZainAssistant(Agent):
                                         yield data["text"]
                                 elif current_event == "done":
                                     logging.info("Stream complete")
+                                    total_duration = (time.time() - turn_start) * 1000
+                                    logging.info(f"⏱️ TOTAL turn time: {total_duration:.0f}ms")
                                     return
                             except json_module.JSONDecodeError:
                                 continue
@@ -198,6 +168,23 @@ class ZainAssistant(Agent):
             logging.error(f"Error streaming agent API: {e}")
             logging.error(f"Full traceback: {traceback.format_exc()}")
             yield "عذراً، حدث خطأ في الاتصال."
+    
+    def _build_conversation_history(self, chat_ctx: agents.ChatContext, max_messages: int = 4) -> str:
+        """Build a formatted string of the last N messages from conversation history."""
+        messages = []
+        chat_messages = list(chat_ctx.items)[-max_messages:] if chat_ctx.items else []
+        
+        for msg in chat_messages:
+            role = msg.role if hasattr(msg, 'role') else 'unknown'
+            content = msg.text_content if hasattr(msg, 'text_content') else str(msg)
+            
+            if content:
+                if role == 'user':
+                    messages.append(f"User: {content}")
+                elif role == 'assistant':
+                    messages.append(f"Assistant: {content}")
+        
+        return "\n".join(messages) if messages else ""
 
 
 async def entrypoint(ctx: agents.JobContext):
@@ -242,12 +229,6 @@ async def entrypoint(ctx: agents.JobContext):
     
     # Create the agent instance
     agent = ZainAssistant()
-    
-    # Register event handlers for timing
-    @session.on("user_started_speaking")
-    def on_user_started_speaking():
-        agent.stt_start_time = time.time()
-        logging.info("🎤 User started speaking - STT timer started")
     
     # Start the agent with room input options to prevent premature disconnection
     await session.start(
