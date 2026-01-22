@@ -6,7 +6,7 @@ import time
 from dotenv import load_dotenv
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent, room_io
+from livekit.agents import AgentSession, Agent, RoomInputOptions
 from livekit.plugins import elevenlabs, silero
 
 load_dotenv()
@@ -71,112 +71,115 @@ class ZainAssistant(Agent):
             allow_interruptions=True
         )
     
-    async def on_user_turn_completed(self, turn_ctx: agents.ChatContext, new_message: agents.ChatMessage):
-        """Called when the user finishes speaking - we handle the response manually."""
+    async def llm_node(
+        self,
+        chat_ctx: agents.ChatContext,
+        tools: list,
+        model_settings: agents.ModelSettings,
+    ):
+        """Override llm_node to use custom AgenticBuilder API instead of standard LLM."""
         import json as json_module
         
         turn_start = time.time()
-        user_text = new_message.text_content
         
-        logging.info(f"User said: {user_text}")
+        # Get the last user message
+        user_message = None
+        for msg in reversed(list(chat_ctx.items)):
+            if msg.role == "user" and msg.text_content:
+                user_message = msg.text_content
+                break
         
-        if not user_text:
-            logging.warning("No user text received")
+        if not user_message:
+            logging.warning("No user message found in chat context")
             return
         
-        conversation_history = self._build_conversation_history(turn_ctx)
+        logging.info(f"User said: {user_message}")
+        
+        # Build conversation history (excluding the current message)
+        conversation_history = self._build_conversation_history(chat_ctx)
         
         logging.info("Starting streaming API call...")
         
-        async def stream_response():
-            """Async generator that streams text from the API."""
-            logging.info("🎤 stream_response generator started")
-            try:
-                session = await get_http_session()
-                headers = {
-                    "Content-Type": "application/json",
-                    "X-API-Key": AGENT_API_KEY,
-                    "Accept": "text/event-stream"
-                }
-                
-                if conversation_history:
-                    full_message = f"Conversation History:\n{conversation_history}\n\nCurrent message: {user_text}"
-                else:
-                    full_message = user_text
-                
-                logging.info(f"Streaming request: {full_message[:200]}...")
-                
-                payload = {
-                    "agent_id": AGENT_ID,
-                    "message": full_message,
-                    "channel": "api",
-                    "persist_messages": False,
-                    "max_iterations": 10,
-                    "max_tool_iterations": 10
-                }
-                
-                if self.api_session_id:
-                    payload["session_id"] = self.api_session_id
-                
-                first_chunk = True
-                current_event = None
-                async with session.post(AGENT_API_URL, json=payload, headers=headers) as resp:
-                    if resp.status == 200:
-                        async for line in resp.content:
-                            line = line.decode('utf-8').strip()
-                            if not line:
-                                continue
-                            
-                            if line.startswith("event: "):
-                                current_event = line[7:]
-                                continue
-                            
-                            if line.startswith("data: "):
-                                data_str = line[6:]
-                                try:
-                                    data = json_module.loads(data_str)
-                                    
-                                    if current_event == "init":
-                                        if "conversation_id" in data:
-                                            self.api_session_id = data["conversation_id"]
-                                    elif current_event == "text_delta":
-                                        if "text" in data:
-                                            if first_chunk:
-                                                logging.info("⏱️ First chunk received - starting TTS")
-                                                first_chunk = False
-                                            yield data["text"]
-                                    elif current_event == "done":
-                                        logging.info("🎤 Stream complete - generator finishing")
-                                        return
-                                except json_module.JSONDecodeError:
-                                    continue
-                    else:
-                        error_text = await resp.text()
-                        logging.error(f"API Error {resp.status}: {error_text}")
-                        yield "عذراً، حدث خطأ في الخدمة."
-            
-            except Exception as e:
-                import traceback
-                logging.error(f"Error streaming agent API: {e}")
-                logging.error(f"Full traceback: {traceback.format_exc()}")
-                yield "عذراً، حدث خطأ في الاتصال."
-        
         try:
-            # Create the generator instance and pass to say()
-            # session.say() returns a SpeechHandle - we need to await it to wait for completion
-            speech_handle = await self.session.say(stream_response(), allow_interruptions=True)
-            # Wait for TTS to finish speaking
-            await speech_handle
+            session = await get_http_session()
+            headers = {
+                "Content-Type": "application/json",
+                "X-API-Key": AGENT_API_KEY,
+                "Accept": "text/event-stream"
+            }
+            
+            if conversation_history:
+                full_message = f"Conversation History:\n{conversation_history}\n\nCurrent message: {user_message}"
+            else:
+                full_message = user_message
+            
+            logging.info(f"Streaming request: {full_message[:200]}...")
+            
+            payload = {
+                "agent_id": AGENT_ID,
+                "message": full_message,
+                "channel": "api",
+                "persist_messages": False,
+                "max_iterations": 10,
+                "max_tool_iterations": 10
+            }
+            
+            if self.api_session_id:
+                payload["session_id"] = self.api_session_id
+            
+            first_chunk = True
+            current_event = None
+            
+            async with session.post(AGENT_API_URL, json=payload, headers=headers) as resp:
+                if resp.status == 200:
+                    async for line in resp.content:
+                        line = line.decode('utf-8').strip()
+                        if not line:
+                            continue
+                        
+                        if line.startswith("event: "):
+                            current_event = line[7:]
+                            continue
+                        
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            try:
+                                data = json_module.loads(data_str)
+                                
+                                if current_event == "init":
+                                    if "conversation_id" in data:
+                                        self.api_session_id = data["conversation_id"]
+                                elif current_event == "text_delta":
+                                    if "text" in data:
+                                        if first_chunk:
+                                            first_to_chunk = (time.time() - turn_start) * 1000
+                                            logging.info(f"⏱️ First chunk received in {first_to_chunk:.0f}ms")
+                                            first_chunk = False
+                                        # Yield text for TTS
+                                        yield data["text"]
+                                elif current_event == "done":
+                                    logging.info("Stream complete")
+                                    break
+                            except json_module.JSONDecodeError:
+                                continue
+                else:
+                    error_text = await resp.text()
+                    logging.error(f"API Error {resp.status}: {error_text}")
+                    yield "عذراً، حدث خطأ في الخدمة."
+        
         except Exception as e:
-            logging.warning(f"TTS interrupted or failed: {e}")
+            import traceback
+            logging.error(f"Error streaming agent API: {e}")
+            logging.error(f"Full traceback: {traceback.format_exc()}")
+            yield "عذراً، حدث خطأ في الاتصال."
         
         total_duration = (time.time() - turn_start) * 1000
         logging.info(f"⏱️ TOTAL turn time: {total_duration:.0f}ms")
     
-    def _build_conversation_history(self, turn_ctx: agents.ChatContext, max_messages: int = 4) -> str:
+    def _build_conversation_history(self, chat_ctx: agents.ChatContext, max_messages: int = 4) -> str:
         """Build a formatted string of the last N messages from conversation history."""
         messages = []
-        chat_messages = list(turn_ctx.items)[-max_messages:] if turn_ctx.items else []
+        chat_messages = list(chat_ctx.items)[-max_messages:] if chat_ctx.items else []
         
         for msg in chat_messages:
             role = msg.role if hasattr(msg, 'role') else 'unknown'
@@ -199,12 +202,6 @@ async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
     
     logging.info("Connected to room: %s", ctx.room.name)
-    for p in ctx.room.remote_participants.values():
-        logging.info(
-            "Participant: sid=%s, identity=%s, audio_tracks=%d",
-            p.sid, p.identity,
-            len([t for t in p.track_publications.values() if t.kind.name == "KIND_AUDIO"])
-        )
     
     session = AgentSession(
         stt=elevenlabs.STT(
@@ -215,14 +212,13 @@ async def entrypoint(ctx: agents.JobContext):
             model="eleven_turbo_v2_5",
             language="ar",
             inactivity_timeout=180,
-            # Streaming optimizations
-            chunk_length_schedule=[50, 80, 120, 160],  # Smaller chunks = lower latency
+            chunk_length_schedule=[50, 80, 120, 160],
         ),
         vad=silero.VAD.load(
             min_speech_duration=0.25,
             min_silence_duration=0.4,
         ),
-        # No LLM - we handle responses in on_user_turn_completed
+        # LLM is handled by llm_node override - set to None
         llm=None,
     )
     
@@ -231,9 +227,6 @@ async def entrypoint(ctx: agents.JobContext):
     await session.start(
         room=ctx.room,
         agent=agent,
-        room_options=room_io.RoomOptions(
-            close_on_disconnect=False,
-        ),
     )
 
 
