@@ -21,6 +21,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # MCP Server configuration
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "https://agenticbuilder-zain.onrender.com/rpc/balance")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
 ZAIN_SYSTEM_PROMPT = """You are a Zain Jordan customer service agent. You speak ON BEHALF of Zain and never refer to Zain as a separate entity or tell users to "go complain to Zain."
@@ -739,6 +740,10 @@ class ZainAssistant(Agent):
 
 async def entrypoint(ctx: agents.JobContext):
     """Main entrypoint for the agent."""
+    if not OPENAI_API_KEY:
+        raise RuntimeError(
+            "Missing OPENAI_API_KEY. Set it in Render environment variables."
+        )
     
     await ctx.connect()
     
@@ -758,6 +763,7 @@ async def entrypoint(ctx: agents.JobContext):
         llm=openai.LLM(
             model="gpt-5.2",
             temperature=0.7,
+            api_key=OPENAI_API_KEY,
         ),
         tts=elevenlabs.TTS(
             voice_id="9enyNIN2oxpPh6N3QDbc",
