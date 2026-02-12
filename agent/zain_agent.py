@@ -20,7 +20,12 @@ logging.getLogger("livekit.plugins.openai").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # MCP Server configuration
-MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "https://agenticbuilder-zain.onrender.com/rpc/balance")
+MCP_SERVER_URL = os.getenv(
+    "MCP_SERVER_URL",
+    "https://agenticbuilder-zain.onrender.com/rpc/balance",
+).strip()
+MCP_SERVER_AUTH_TOKEN = os.getenv("MCP_SERVER_AUTH_TOKEN", "").strip()
+MCP_SERVER_TRANSPORT = os.getenv("MCP_SERVER_TRANSPORT", "streamable-http").strip().lower()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
@@ -749,12 +754,39 @@ async def entrypoint(ctx: agents.JobContext):
     
     logging.info("Connected to room: %s", ctx.room.name)
     
-    # Configure MCP server for tools
-    mcp_server = mcp.MCPServerHTTP(
-        url=MCP_SERVER_URL,
-        timeout=10,
-        sse_read_timeout=300,
-    )
+    # Configure MCP server for tools (optional). MCPServerHTTP uses SSE transport.
+    mcp_servers = []
+    if MCP_SERVER_URL:
+        mcp_headers = None
+        if MCP_SERVER_AUTH_TOKEN:
+            mcp_headers = {"Authorization": f"Bearer {MCP_SERVER_AUTH_TOKEN}"}
+        mcp_server = mcp.MCPServerHTTP(
+            url=MCP_SERVER_URL,
+            headers=mcp_headers,
+            timeout=10,
+            sse_read_timeout=300,
+        )
+
+        # Force transport when endpoint type is known.
+        # livekit-agents 1.3.x auto-detects streamable-http only for URLs ending in "/mcp".
+        if MCP_SERVER_TRANSPORT == "streamable-http":
+            mcp_server._use_streamable_http = True
+        elif MCP_SERVER_TRANSPORT == "sse":
+            mcp_server._use_streamable_http = False
+        elif MCP_SERVER_TRANSPORT != "auto":
+            logging.warning(
+                "Unknown MCP_SERVER_TRANSPORT=%s, falling back to auto detection",
+                MCP_SERVER_TRANSPORT,
+            )
+
+        mcp_servers.append(mcp_server)
+        logging.info(
+            "MCP enabled with URL: %s (transport=%s)",
+            MCP_SERVER_URL,
+            MCP_SERVER_TRANSPORT,
+        )
+    else:
+        logging.warning("MCP disabled: MCP_SERVER_URL is not set")
     
     session = AgentSession(
         stt=elevenlabs.STT(
@@ -776,7 +808,7 @@ async def entrypoint(ctx: agents.JobContext):
             min_speech_duration=0.25,
             min_silence_duration=0.4,
         ),
-        mcp_servers=[mcp_server],
+        mcp_servers=mcp_servers,
     )
     
     agent = ZainAssistant()
