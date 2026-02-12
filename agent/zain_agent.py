@@ -1,5 +1,6 @@
 import os
 import logging
+import httpx
 from dotenv import load_dotenv
 
 from livekit import agents
@@ -25,6 +26,8 @@ MCP_SERVER_URL = os.getenv(
     "https://agenticbuilder-zain.onrender.com/rpc/balance",
 ).strip()
 MCP_SERVER_AUTH_TOKEN = os.getenv("MCP_SERVER_AUTH_TOKEN", "").strip()
+MCP_SERVER_AUTH_HEADER = os.getenv("MCP_SERVER_AUTH_HEADER", "Authorization").strip()
+MCP_SERVER_AUTH_SCHEME = os.getenv("MCP_SERVER_AUTH_SCHEME", "Bearer").strip()
 MCP_SERVER_TRANSPORT = os.getenv("MCP_SERVER_TRANSPORT", "streamable-http").strip().lower()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -743,6 +746,27 @@ class ZainAssistant(Agent):
         )
 
 
+async def _preflight_mcp_endpoint(url: str, transport: str, headers: dict | None) -> None:
+    method = "POST" if transport == "streamable-http" else "GET"
+    body = None
+    request_headers = dict(headers or {})
+    if method == "POST":
+        request_headers.setdefault("Content-Type", "application/json")
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+        }
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        response = await client.request(method=method, url=url, headers=request_headers, json=body)
+    if response.status_code >= 400:
+        snippet = (response.text or "").strip().replace("\n", " ")[:300]
+        raise RuntimeError(
+            f"MCP preflight failed: {response.status_code} for {url} via {method}. "
+            f"Response: {snippet}"
+        )
+
+
 async def entrypoint(ctx: agents.JobContext):
     """Main entrypoint for the agent."""
     if not OPENAI_API_KEY:
@@ -759,7 +783,18 @@ async def entrypoint(ctx: agents.JobContext):
     if MCP_SERVER_URL:
         mcp_headers = None
         if MCP_SERVER_AUTH_TOKEN:
-            mcp_headers = {"Authorization": f"Bearer {MCP_SERVER_AUTH_TOKEN}"}
+            auth_value = MCP_SERVER_AUTH_TOKEN
+            if MCP_SERVER_AUTH_SCHEME:
+                auth_value = f"{MCP_SERVER_AUTH_SCHEME} {MCP_SERVER_AUTH_TOKEN}"
+            mcp_headers = {MCP_SERVER_AUTH_HEADER: auth_value}
+        else:
+            logging.warning("MCP auth token is empty; endpoint may reject requests")
+
+        await _preflight_mcp_endpoint(
+            url=MCP_SERVER_URL,
+            transport=MCP_SERVER_TRANSPORT,
+            headers=mcp_headers,
+        )
         mcp_server = mcp.MCPServerHTTP(
             url=MCP_SERVER_URL,
             headers=mcp_headers,
