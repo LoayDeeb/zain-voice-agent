@@ -1,6 +1,8 @@
 import os
 import logging
+import time
 import httpx
+import jwt
 from dotenv import load_dotenv
 
 from livekit import agents
@@ -29,6 +31,13 @@ MCP_SERVER_AUTH_TOKEN = os.getenv("MCP_SERVER_AUTH_TOKEN", "").strip()
 MCP_SERVER_AUTH_HEADER = os.getenv("MCP_SERVER_AUTH_HEADER", "Authorization").strip()
 MCP_SERVER_AUTH_SCHEME = os.getenv("MCP_SERVER_AUTH_SCHEME", "Bearer").strip()
 MCP_SERVER_TRANSPORT = os.getenv("MCP_SERVER_TRANSPORT", "streamable-http").strip().lower()
+JWT_SECRET = os.getenv("JWT_SECRET", "").strip()
+MCP_JWT_ISSUER = os.getenv("MCP_JWT_ISSUER", "agentic-builder").strip()
+MCP_JWT_SUBJECT = os.getenv(
+    "MCP_JWT_SUBJECT",
+    "00000000-0000-0000-0000-000000000000",
+).strip()
+MCP_JWT_TTL_SECONDS = int(os.getenv("MCP_JWT_TTL_SECONDS", "900"))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
@@ -767,6 +776,34 @@ async def _preflight_mcp_endpoint(url: str, transport: str, headers: dict | None
         )
 
 
+def _build_mcp_auth_headers() -> dict | None:
+    token = MCP_SERVER_AUTH_TOKEN
+
+    # If a static token is not set, mint a short-lived JWT from JWT_SECRET.
+    if not token and JWT_SECRET:
+        now = int(time.time())
+        payload = {
+            "sub": MCP_JWT_SUBJECT,
+            "iss": MCP_JWT_ISSUER,
+            "iat": now,
+            "exp": now + MCP_JWT_TTL_SECONDS,
+        }
+        token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+        logging.info(
+            "Generated MCP JWT from JWT_SECRET (iss=%s, ttl=%ss)",
+            MCP_JWT_ISSUER,
+            MCP_JWT_TTL_SECONDS,
+        )
+
+    if not token:
+        return None
+
+    auth_value = token
+    if MCP_SERVER_AUTH_SCHEME:
+        auth_value = f"{MCP_SERVER_AUTH_SCHEME} {token}"
+    return {MCP_SERVER_AUTH_HEADER: auth_value}
+
+
 async def entrypoint(ctx: agents.JobContext):
     """Main entrypoint for the agent."""
     if not OPENAI_API_KEY:
@@ -781,14 +818,11 @@ async def entrypoint(ctx: agents.JobContext):
     # Configure MCP server for tools (optional). MCPServerHTTP uses SSE transport.
     mcp_servers = []
     if MCP_SERVER_URL:
-        mcp_headers = None
-        if MCP_SERVER_AUTH_TOKEN:
-            auth_value = MCP_SERVER_AUTH_TOKEN
-            if MCP_SERVER_AUTH_SCHEME:
-                auth_value = f"{MCP_SERVER_AUTH_SCHEME} {MCP_SERVER_AUTH_TOKEN}"
-            mcp_headers = {MCP_SERVER_AUTH_HEADER: auth_value}
-        else:
-            logging.warning("MCP auth token is empty; endpoint may reject requests")
+        mcp_headers = _build_mcp_auth_headers()
+        if not mcp_headers:
+            logging.warning(
+                "MCP auth token is empty and JWT_SECRET is not set; endpoint may reject requests"
+            )
 
         await _preflight_mcp_endpoint(
             url=MCP_SERVER_URL,
